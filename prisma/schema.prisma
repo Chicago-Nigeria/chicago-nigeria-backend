@@ -1,0 +1,405 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== USER & AUTH ====================
+
+model User {
+  id            String   @id @default(uuid())
+  firstName     String
+  lastName      String
+  email         String   @unique
+  phone         String   @unique
+  countryCode   String   @default("+1")
+  photo         String?
+  bio           String?
+  location      String?
+  profession    String?
+  company       String?
+  role          String   @default("user") // "user", "admin", "super_admin"
+  isVerified    Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Preferences
+  preferences   UserPreferences?
+
+  // Relations
+  listings      Listing[]
+  events        Event[]
+  tickets       Ticket[]
+  eventRegistrations EventRegistration[]
+  posts         Post[]
+  comments      Comment[]
+  likes         Like[]
+  saves         Save[]
+  groupMembers  GroupMember[]
+  sentMessages  Message[]        @relation("SentMessages")
+  receivedMessages Message[]     @relation("ReceivedMessages")
+  notifications Notification[]
+  otpCodes      OTPCode[]
+  refreshTokens RefreshToken[]
+  adminAuditLogs AdminAuditLog[] @relation("AdminAuditLogs")
+
+  @@index([email])
+  @@index([phone])
+  @@index([role])
+}
+
+model UserPreferences {
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Notification preferences
+  emailNotifications    Boolean  @default(true)
+  pushNotifications     Boolean  @default(true)
+  eventReminders        Boolean  @default(true)
+  messageNotifications  Boolean  @default(true)
+
+  // Privacy
+  profileVisibility     String   @default("public") // "public", "private", "friends"
+  showEmail             Boolean  @default(false)
+  showPhone             Boolean  @default(false)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model OTPCode {
+  id        String   @id @default(uuid())
+  email     String
+  phone     String?
+  otp       String
+  type      String   // "signup", "signin", "reset-password"
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([email, type, used])
+  @@index([expiresAt])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+}
+
+// ==================== MARKETPLACE ====================
+
+model Listing {
+  id          String   @id @default(uuid())
+  title       String
+  description String
+  price       Float
+  category    String
+  condition   String   @default("new") // "new", "used", "refurbished"
+  images      String[] // Array of image URLs
+  location    String?
+  status      String   @default("active") // "active", "sold", "archived"
+
+  sellerId    String
+  seller      User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  likes       Like[]
+  saves       Save[]
+  comments    Comment[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sellerId])
+  @@index([category])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ==================== EVENTS ====================
+
+model Event {
+  id              String   @id @default(uuid())
+  title           String
+  description     String
+  category        String
+  location        String
+  venue           String?
+  startDate       DateTime
+  endDate         DateTime?
+  startTime       String
+  endTime         String?
+  coverImage      String?
+  images          String[] // Array of image URLs
+
+  // Ticketing
+  isFree          Boolean  @default(false)
+  ticketPrice     Float?
+  totalTickets    Int?
+  availableTickets Int?
+
+  status          String   @default("pending") // "pending", "approved", "rejected", "upcoming", "ongoing", "completed", "cancelled"
+
+  organizerId     String
+  organizer       User     @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+
+  tickets         Ticket[]
+  registrations   EventRegistration[]
+  likes           Like[]
+  saves           Save[]
+  comments        Comment[]
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizerId])
+  @@index([category])
+  @@index([status])
+  @@index([startDate])
+}
+
+model Ticket {
+  id          String   @id @default(uuid())
+  ticketCode  String   @unique
+
+  eventId     String
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  quantity    Int      @default(1)
+  totalPrice  Float
+  status      String   @default("confirmed") // "confirmed", "cancelled", "used"
+
+  purchasedAt DateTime @default(now())
+  usedAt      DateTime?
+
+  @@index([eventId])
+  @@index([userId])
+  @@index([ticketCode])
+}
+
+// Free Event Registrations (separate from paid tickets)
+model EventRegistration {
+  id          String   @id @default(uuid())
+
+  eventId     String
+  event       Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  firstName   String
+  lastName    String
+  email       String
+  phone       String
+
+  status      String   @default("confirmed") // "confirmed", "cancelled"
+
+  registeredAt DateTime @default(now())
+
+  @@unique([userId, eventId]) // One registration per user per event
+  @@index([eventId])
+  @@index([userId])
+  @@index([email])
+}
+
+// ==================== SOCIAL/FEEDS ====================
+
+model Post {
+  id          String   @id @default(uuid())
+  content     String
+  images      String[] // Array of image URLs
+  type        String   @default("post") // "post", "article", "poll"
+
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  likes       Like[]
+  comments    Comment[]
+  saves       Save[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([authorId])
+  @@index([createdAt])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  // Polymorphic relations
+  postId    String?
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  listingId String?
+  listing   Listing? @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  eventId   String?
+  event     Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([authorId])
+  @@index([postId])
+  @@index([listingId])
+  @@index([eventId])
+}
+
+model Like {
+  id        String   @id @default(uuid())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Polymorphic relations
+  postId    String?
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  listingId String?
+  listing   Listing? @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  eventId   String?
+  event     Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@unique([userId, listingId])
+  @@unique([userId, eventId])
+  @@index([userId])
+}
+
+model Save {
+  id        String   @id @default(uuid())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Polymorphic relations
+  postId    String?
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  listingId String?
+  listing   Listing? @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  eventId   String?
+  event     Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@unique([userId, listingId])
+  @@unique([userId, eventId])
+  @@index([userId])
+}
+
+// ==================== GROUPS ====================
+
+model Group {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  coverImage  String?
+  isPrivate   Boolean  @default(false)
+
+  members     GroupMember[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([name])
+}
+
+model GroupMember {
+  id        String   @id @default(uuid())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  role      String   @default("member") // "admin", "moderator", "member"
+  joinedAt  DateTime @default(now())
+
+  @@unique([userId, groupId])
+  @@index([userId])
+  @@index([groupId])
+}
+
+// ==================== MESSAGING ====================
+
+model Message {
+  id         String   @id @default(uuid())
+  content    String
+  isRead     Boolean  @default(false)
+
+  senderId   String
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  receiverId String
+  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime @default(now())
+
+  @@index([senderId, receiverId])
+  @@index([createdAt])
+}
+
+// ==================== NOTIFICATIONS ====================
+
+model Notification {
+  id        String   @id @default(uuid())
+  type      String   // "like", "comment", "message", "event", "ticket", etc.
+  title     String
+  message   String
+  link      String?
+  isRead    Boolean  @default(false)
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+// ==================== ADMIN ====================
+
+model AdminAuditLog {
+  id          String   @id @default(uuid())
+  adminId     String
+  admin       User     @relation("AdminAuditLogs", fields: [adminId], references: [id], onDelete: Cascade)
+  action      String   // "ban_user", "delete_event", "approve_event", etc.
+  targetType  String   // "user", "event", "listing", "post"
+  targetId    String
+  details     Json?    // Additional context about the action
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@index([adminId])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}
