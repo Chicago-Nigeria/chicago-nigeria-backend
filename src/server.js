@@ -31,9 +31,15 @@ app.use(cors({
       'https://www.chicagonigerians.com',
     ];
     // Allow requests with no origin (mobile apps, curl, etc.)
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin) {
+      callback(null, true);
+    } else if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else if (origin.endsWith('.ondigitalocean.app')) {
+      // Allow all DigitalOcean app URLs for deployment flexibility
       callback(null, true);
     } else {
+      console.log('CORS blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },

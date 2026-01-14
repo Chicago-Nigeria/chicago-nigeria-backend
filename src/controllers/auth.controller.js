@@ -139,6 +139,8 @@ const authController = {
       res.json({
         success: true,
         message: 'Account created successfully',
+        accessToken,
+        refreshToken,
         data: {
           id: user.id,
           firstName: user.firstName,
@@ -289,6 +291,8 @@ const authController = {
       res.json({
         success: true,
         message: 'Signed in successfully',
+        accessToken,
+        refreshToken,
         data: {
           id: user.id,
           firstName: user.firstName,
