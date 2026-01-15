@@ -3,6 +3,7 @@ const router = express.Router();
 const adminController = require('../controllers/admin.controller');
 const { authenticateAdmin } = require('../middleware/auth');
 const { adminAuthLimiter, adminApiLimiter } = require('../middleware/rateLimiter');
+const { upload } = require('../middleware/upload');
 
 // ==================== ADMIN AUTHENTICATION ====================
 // Public routes (but rate limited)
@@ -30,6 +31,7 @@ router.delete('/users/:id', adminController.deleteUser);
 // Event management
 router.get('/events', adminController.getAllEvents);
 router.get('/events/service-fees/total', adminController.getEventServiceFees);
+router.post('/events', upload.single('coverImage'), adminController.createEvent);
 router.get('/events/:id', adminController.getEventById);
 router.put('/events/:id/approve', adminController.approveEvent);
 router.put('/events/:id/reject', adminController.rejectEvent);

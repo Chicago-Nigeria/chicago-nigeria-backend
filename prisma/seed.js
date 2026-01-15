@@ -38,9 +38,11 @@ async function main() {
   //   },
   // });
 
-  // Admin user
-  const adminUser = await prisma.user.create({
-    data: {
+  // Admin user 1
+  const adminUser = await prisma.user.upsert({
+    where: { email: 'chicagonigerians14@gmail.com' },
+    update: {},
+    create: {
       firstName: 'Admin',
       lastName: 'User',
       email: 'chicagonigerians14@gmail.com',
@@ -59,6 +61,32 @@ async function main() {
       },
     },
   });
+
+  // Admin user 2
+  const adminUser2 = await prisma.user.upsert({
+    where: { email: 'godfredobot@gmail.com' },
+    update: { role: 'admin' },
+    create: {
+      firstName: 'Godfred',
+      lastName: 'Godwin',
+      email: 'godfredobot@gmail.com',
+      phone: '+13129999998',
+      countryCode: '+1',
+      bio: 'Platform Administrator',
+      location: 'Chicago, IL',
+      role: 'admin',
+      isVerified: true,
+      isActive: true,
+      preferences: {
+        create: {
+          emailNotifications: true,
+          pushNotifications: true,
+        },
+      },
+    },
+  });
+
+  console.log('Admin users:', adminUser.email, adminUser2.email);
 
   // console.log('Created users:', user1.email, user2.email, adminUser.email);
 

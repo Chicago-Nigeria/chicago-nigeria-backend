@@ -2,6 +2,7 @@ const prisma = require('../config/prisma');
 const jwt = require('jsonwebtoken');
 const { sendOTPEmail } = require('../utils/email');
 const { generateOTP } = require('../utils/otp');
+const { uploadToCloudinary } = require('../utils/cloudinary');
 
 // Helper function to log admin actions
 const logAdminAction = async (adminId, action, targetType, targetId, details, req) => {
@@ -940,6 +941,95 @@ const adminController = {
         },
       });
     } catch (error) {
+      next(error);
+    }
+  },
+
+  // Create event as admin (auto-approved, goes live immediately)
+  createEvent: async (req, res, next) => {
+    try {
+      const {
+        title,
+        eventType,
+        description,
+        startDate,
+        endDate,
+        startTime,
+        endTime,
+        venue,
+        location,
+        isFree,
+        ticketPrice,
+        currency,
+        totalTickets,
+        visibility,
+        category,
+      } = req.body;
+
+      // Upload banner image to Cloudinary if provided
+      let coverImage = null;
+      if (req.file) {
+        coverImage = await uploadToCloudinary(
+          req.file.buffer,
+          'event',
+          req.user.id
+        );
+      }
+
+      // Parse dates
+      const startDateTime = new Date(`${startDate}T${startTime}`);
+      const endDateTime = new Date(`${endDate}T${endTime}`);
+
+      // Create event with 'upcoming' status (admin-created events go live immediately)
+      const event = await prisma.event.create({
+        data: {
+          title,
+          description,
+          category: category || 'General',
+          venue: venue || '',
+          location: location || '',
+          startDate: startDateTime,
+          endDate: endDateTime,
+          startTime,
+          endTime,
+          coverImage,
+          images: coverImage ? [coverImage] : [],
+          isFree: isFree === 'true' || isFree === true,
+          ticketPrice: isFree === 'true' || isFree === true ? null : parseFloat(ticketPrice) || null,
+          totalTickets: totalTickets ? parseInt(totalTickets) : null,
+          availableTickets: totalTickets ? parseInt(totalTickets) : null,
+          status: 'upcoming', // Admin-created events are auto-approved
+          organizerId: req.user.id,
+        },
+        include: {
+          organizer: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              photo: true,
+            },
+          },
+        },
+      });
+
+      // Log admin action
+      await logAdminAction(
+        req.user.id,
+        'create_event',
+        'event',
+        event.id,
+        { title, category, isFree: isFree === 'true' || isFree === true },
+        req
+      );
+
+      res.status(201).json({
+        success: true,
+        message: 'Event created successfully and is now live',
+        data: event,
+      });
+    } catch (error) {
+      console.error('Admin create event error:', error);
       next(error);
     }
   },
