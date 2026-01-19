@@ -14,12 +14,21 @@ const groupRoutes = require('./routes/group.routes');
 const messageRoutes = require('./routes/message.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const adminRoutes = require('./routes/admin.routes');
+const paymentRoutes = require('./routes/payment.routes');
+const webhookController = require('./controllers/webhook.controller');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 5002;
+
+// Stripe webhook endpoint (must be before express.json() middleware)
+// Needs raw body for signature verification
+app.post('/api/webhooks/stripe',
+  express.raw({ type: 'application/json' }),
+  webhookController.handleStripeWebhook
+);
 
 // Middleware
 app.use(cors({
@@ -66,6 +75,7 @@ app.use('/api/groups', groupRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

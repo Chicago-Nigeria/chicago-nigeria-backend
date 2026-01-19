@@ -20,6 +20,11 @@ router.get('/user/attending', authenticate, eventController.getAttendingEvents);
 router.get('/user/hosted', authenticate, eventController.getHostedEvents);
 router.get('/user/past', authenticate, eventController.getPastEvents);
 
+// Organizer event management
+router.get('/organizer/events', authenticate, eventController.getAllOrganizerEvents);
+router.get('/organizer/events/:id', authenticate, eventController.getOrganizerEventDetails);
+router.get('/organizer/events/:id/export-csv', authenticate, eventController.exportAttendeesCSV);
+
 // Event interactions
 router.post('/:id/like', authenticate, eventController.toggleLike);
 

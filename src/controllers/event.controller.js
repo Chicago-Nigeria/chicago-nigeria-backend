@@ -40,8 +40,44 @@ const eventController = {
   },
 
   getEventById: async (req, res, next) => {
-    // Implementation here
-    res.json({ success: true, message: 'Get event by ID - TODO' });
+    try {
+      const { id } = req.params;
+
+      const event = await prisma.event.findUnique({
+        where: { id },
+        include: {
+          organizer: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              photo: true,
+            },
+          },
+          _count: {
+            select: {
+              tickets: true,
+              registrations: true,
+            },
+          },
+        },
+      });
+
+      if (!event) {
+        return res.status(404).json({
+          success: false,
+          message: 'Event not found',
+        });
+      }
+
+      res.json({
+        success: true,
+        data: event,
+      });
+    } catch (error) {
+      console.error('Get event by ID error:', error);
+      next(error);
+    }
   },
 
   createEvent: async (req, res, next) => {
@@ -440,6 +476,273 @@ const eventController = {
   toggleLike: async (req, res, next) => {
     // Similar to listing like
     res.json({ success: true, message: 'Toggle event like - TODO' });
+  },
+
+  // ==================== ORGANIZER EVENT MANAGEMENT ====================
+
+  /**
+   * Get organizer's event with full details including attendees
+   * Only accessible by the event organizer
+   */
+  getOrganizerEventDetails: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+
+      const event = await prisma.event.findUnique({
+        where: { id },
+        include: {
+          organizer: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              photo: true,
+            },
+          },
+          // Free event registrations
+          registrations: {
+            orderBy: { registeredAt: 'desc' },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              status: true,
+              registeredAt: true,
+            },
+          },
+          // Paid event tickets
+          tickets: {
+            orderBy: { purchasedAt: 'desc' },
+            select: {
+              id: true,
+              ticketCode: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              quantity: true,
+              unitPrice: true,
+              totalPrice: true,
+              platformFee: true,
+              processingFee: true,
+              status: true,
+              purchasedAt: true,
+              usedAt: true,
+            },
+          },
+          _count: {
+            select: {
+              registrations: true,
+              tickets: true,
+            },
+          },
+        },
+      });
+
+      if (!event) {
+        return res.status(404).json({
+          success: false,
+          message: 'Event not found',
+        });
+      }
+
+      // Verify user is the organizer
+      if (event.organizerId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You are not authorized to view this event\'s details',
+        });
+      }
+
+      // Calculate earnings summary for paid events
+      let earningsSummary = null;
+      if (!event.isFree && event.tickets.length > 0) {
+        const totalRevenue = event.tickets
+          .filter(t => t.status === 'confirmed')
+          .reduce((sum, t) => sum + (t.unitPrice * t.quantity), 0);
+        const totalPlatformFees = event.tickets
+          .filter(t => t.status === 'confirmed')
+          .reduce((sum, t) => sum + t.platformFee, 0);
+
+        earningsSummary = {
+          totalRevenue,
+          platformFees: totalPlatformFees,
+          netEarnings: totalRevenue - totalPlatformFees,
+          ticketsSold: event.tickets.filter(t => t.status === 'confirmed').length,
+        };
+      }
+
+      res.json({
+        success: true,
+        data: {
+          ...event,
+          earningsSummary,
+        },
+      });
+    } catch (error) {
+      console.error('Get organizer event details error:', error);
+      next(error);
+    }
+  },
+
+  /**
+   * Export event attendees as CSV
+   * Only accessible by the event organizer
+   */
+  exportAttendeesCSV: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+
+      const event = await prisma.event.findUnique({
+        where: { id },
+        include: {
+          registrations: {
+            orderBy: { registeredAt: 'desc' },
+            select: {
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              status: true,
+              registeredAt: true,
+            },
+          },
+          tickets: {
+            orderBy: { purchasedAt: 'desc' },
+            select: {
+              ticketCode: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              quantity: true,
+              unitPrice: true,
+              totalPrice: true,
+              status: true,
+              purchasedAt: true,
+              usedAt: true,
+            },
+          },
+        },
+      });
+
+      if (!event) {
+        return res.status(404).json({
+          success: false,
+          message: 'Event not found',
+        });
+      }
+
+      // Verify user is the organizer
+      if (event.organizerId !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'You are not authorized to export this event\'s attendees',
+        });
+      }
+
+      // Build CSV content
+      let csvContent = '';
+
+      if (event.isFree) {
+        // Free event - registrations
+        csvContent = 'First Name,Last Name,Email,Phone,Status,Registered At\n';
+        event.registrations.forEach(reg => {
+          csvContent += `"${reg.firstName || ''}","${reg.lastName || ''}","${reg.email || ''}","${reg.phone || ''}","${reg.status}","${reg.registeredAt.toISOString()}"\n`;
+        });
+      } else {
+        // Paid event - tickets
+        csvContent = 'Ticket Code,First Name,Last Name,Email,Phone,Quantity,Unit Price,Total Price,Status,Purchased At,Used At\n';
+        event.tickets.forEach(ticket => {
+          csvContent += `"${ticket.ticketCode || ''}","${ticket.firstName || ''}","${ticket.lastName || ''}","${ticket.email || ''}","${ticket.phone || ''}",${ticket.quantity},$${ticket.unitPrice.toFixed(2)},$${ticket.totalPrice.toFixed(2)},"${ticket.status}","${ticket.purchasedAt.toISOString()}","${ticket.usedAt ? ticket.usedAt.toISOString() : ''}"\n`;
+        });
+      }
+
+      // Set headers for CSV download
+      const filename = `${event.title.replace(/[^a-z0-9]/gi, '_')}_attendees_${new Date().toISOString().split('T')[0]}.csv`;
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(csvContent);
+    } catch (error) {
+      console.error('Export attendees CSV error:', error);
+      next(error);
+    }
+  },
+
+  /**
+   * Get all organizer's events with summary info
+   */
+  getAllOrganizerEvents: async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+
+      const events = await prisma.event.findMany({
+        where: {
+          organizerId: userId,
+        },
+        include: {
+          _count: {
+            select: {
+              registrations: true,
+              tickets: true,
+            },
+          },
+        },
+        orderBy: { startDate: 'desc' },
+      });
+
+      // Add earnings info for paid events
+      const eventsWithEarnings = await Promise.all(
+        events.map(async (event) => {
+          if (event.isFree) {
+            return {
+              ...event,
+              totalAttendees: event._count.registrations,
+              earnings: null,
+            };
+          }
+
+          // Get ticket earnings for paid events
+          const ticketAggregation = await prisma.ticket.aggregate({
+            where: {
+              eventId: event.id,
+              status: 'confirmed',
+            },
+            _sum: {
+              unitPrice: true,
+              platformFee: true,
+            },
+            _count: true,
+          });
+
+          const totalRevenue = ticketAggregation._sum.unitPrice || 0;
+          const platformFees = ticketAggregation._sum.platformFee || 0;
+
+          return {
+            ...event,
+            totalAttendees: event._count.tickets,
+            earnings: {
+              totalRevenue,
+              platformFees,
+              netEarnings: totalRevenue - platformFees,
+            },
+          };
+        })
+      );
+
+      res.json({
+        success: true,
+        data: eventsWithEarnings,
+      });
+    } catch (error) {
+      console.error('Get all organizer events error:', error);
+      next(error);
+    }
   },
 };
 

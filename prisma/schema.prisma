@@ -47,6 +47,11 @@ model User {
   refreshTokens RefreshToken[]
   adminAuditLogs AdminAuditLog[] @relation("AdminAuditLogs")
 
+  // Stripe Connect (for event organizers)
+  stripeAccount  StripeAccount?
+  payments       Payment[]
+  payouts        Payout[]
+
   @@index([email])
   @@index([phone])
   @@index([role])
@@ -181,9 +186,23 @@ model Ticket {
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // Attendee info (in case different from purchaser)
+  firstName   String?
+  lastName    String?
+  email       String?
+  phone       String?
+
   quantity    Int      @default(1)
-  totalPrice  Float
-  status      String   @default("confirmed") // "confirmed", "cancelled", "used"
+  unitPrice   Float    // Price per ticket (organizer's price)
+  totalPrice  Float    // Total paid by buyer (includes processing fee)
+  platformFee Float    @default(5.0) // $5 per ticket platform fee
+  processingFee Float  @default(0) // Stripe processing fee
+
+  status      String   @default("pending") // "pending", "confirmed", "cancelled", "refunded", "used"
+
+  // Payment reference
+  paymentId   String?
+  payment     Payment? @relation(fields: [paymentId], references: [id])
 
   purchasedAt DateTime @default(now())
   usedAt      DateTime?
@@ -191,6 +210,7 @@ model Ticket {
   @@index([eventId])
   @@index([userId])
   @@index([ticketCode])
+  @@index([paymentId])
 }
 
 // Free Event Registrations (separate from paid tickets)
@@ -402,4 +422,127 @@ model AdminAuditLog {
   @@index([adminId])
   @@index([targetType, targetId])
   @@index([createdAt])
+}
+
+// ==================== PAYMENTS (Stripe Connect) ====================
+
+// Organizer's connected Stripe account
+model StripeAccount {
+  id                    String   @id @default(uuid())
+
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  stripeAccountId       String   @unique // Stripe Connect account ID (acct_xxx)
+  stripeAccountType     String   @default("express") // "express", "standard", "custom"
+
+  // Onboarding status
+  isOnboardingComplete  Boolean  @default(false)
+  chargesEnabled        Boolean  @default(false)
+  payoutsEnabled        Boolean  @default(false)
+
+  // Account details (cached from Stripe)
+  businessName          String?
+  businessType          String?
+  country               String   @default("US")
+  defaultCurrency       String   @default("usd")
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relations
+  payouts               Payout[]
+
+  @@index([stripeAccountId])
+}
+
+// Payment records for ticket purchases
+model Payment {
+  id                    String   @id @default(uuid())
+
+  // Stripe references
+  stripePaymentIntentId String   @unique // pi_xxx
+  stripeChargeId        String?  // ch_xxx (after payment succeeds)
+
+  // Buyer info
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Event info
+  eventId               String
+
+  // Amount breakdown (in cents for precision)
+  subtotal              Int      // Ticket price × quantity (in cents)
+  platformFee           Int      // $5 × quantity (in cents)
+  processingFee         Int      // Stripe fee passed to buyer (in cents)
+  totalAmount           Int      // Total charged to buyer (in cents)
+
+  // Organizer payout info
+  organizerAmount       Int      // Amount organizer will receive (subtotal - platformFee) (in cents)
+  organizerStripeAccountId String? // Connected account to pay out to
+
+  currency              String   @default("usd")
+  status                String   @default("pending") // "pending", "succeeded", "failed", "refunded", "partially_refunded"
+
+  // Metadata
+  metadata              Json?    // Additional payment details
+  failureReason         String?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relations
+  tickets               Ticket[]
+  payout                Payout?
+
+  @@index([userId])
+  @@index([eventId])
+  @@index([stripePaymentIntentId])
+  @@index([status])
+}
+
+// Payouts to event organizers (after event ends)
+model Payout {
+  id                    String   @id @default(uuid())
+
+  // Stripe references
+  stripeTransferId      String?  @unique // tr_xxx
+  stripePayoutId        String?  // po_xxx (when funds leave Stripe to bank)
+
+  // Organizer info (optional - null if organizer hasn't connected Stripe)
+  stripeAccountId       String?
+  stripeAccount         StripeAccount? @relation(fields: [stripeAccountId], references: [id])
+
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Related payment
+  paymentId             String   @unique
+  payment               Payment  @relation(fields: [paymentId], references: [id])
+
+  // Event info
+  eventId               String
+
+  // Amount (in cents)
+  amount                Int      // Amount transferred to organizer
+  currency              String   @default("usd")
+
+  // Payout method: "stripe" for automatic, "manual" for organizers without Stripe
+  payoutMethod          String   @default("stripe") // "stripe", "manual"
+
+  status                String   @default("pending") // "pending", "processing", "paid", "failed", "cancelled"
+
+  // Timing
+  scheduledFor          DateTime? // When payout is scheduled (after event ends)
+  processedAt           DateTime?
+  failureReason         String?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([stripeAccountId])
+  @@index([userId])
+  @@index([eventId])
+  @@index([status])
+  @@index([scheduledFor])
 }

@@ -22,6 +22,7 @@ router.get('/dashboard/stats', adminController.getDashboardStats);
 router.get('/dashboard/recent-activities', adminController.getRecentUserActivities);
 
 // User management
+router.get('/users/search', adminController.searchUserByEmail); // Search by email (for organizer assignment)
 router.get('/users', adminController.getAllUsers);
 router.get('/users/:id', adminController.getUserById);
 router.put('/users/:id/ban', adminController.banUser);
@@ -43,6 +44,17 @@ router.get('/listings/:id', adminController.getListingById);
 router.put('/listings/:id/approve', adminController.approveListing);
 router.put('/listings/:id/flag', adminController.flagListing);
 router.delete('/listings/:id', adminController.deleteListing);
+
+// Payout management
+router.get('/payouts', adminController.getAllPayouts);
+router.get('/payouts/stats', adminController.getPayoutStats);
+router.get('/payouts/detailed', adminController.getPayoutsDetailed);
+router.get('/payouts/manual/pending', adminController.getPendingManualPayouts);
+router.post('/payouts/process-stripe', adminController.processStripePayout);
+router.post('/payouts/process-event/:eventId', adminController.processEventPayout);
+router.put('/payouts/:id/mark-paid', adminController.markPayoutAsPaid);
+router.put('/payouts/:id/retry', adminController.retryPayout);
+router.put('/payouts/migrate/:userId', adminController.migrateManualToStripe);
 
 // Audit logs
 router.get('/audit-logs', adminController.getAuditLogs);

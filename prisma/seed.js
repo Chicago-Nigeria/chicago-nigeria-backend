@@ -39,38 +39,61 @@ async function main() {
   // });
 
   // Admin user 1
-  const adminUser = await prisma.user.upsert({
-    where: { email: 'chicagonigerians14@gmail.com' },
-    update: {},
-    create: {
-      firstName: 'Admin',
-      lastName: 'User',
-      email: 'chicagonigerians14@gmail.com',
-      phone: '+13129999999',
-      countryCode: '+1',
-      bio: 'Platform Administrator',
-      location: 'Chicago, IL',
-      role: 'admin',
-      isVerified: true,
-      isActive: true,
-      preferences: {
-        create: {
-          emailNotifications: true,
-          pushNotifications: true,
-        },
-      },
-    },
-  });
+  // const adminUser = await prisma.user.upsert({
+  //   where: { email: 'chicagonigerians14@gmail.com' },
+  //   update: {},
+  //   create: {
+  //     firstName: 'Admin',
+  //     lastName: 'User',
+  //     email: 'chicagonigerians14@gmail.com',
+  //     phone: '+13129999999',
+  //     countryCode: '+1',
+  //     bio: 'Platform Administrator',
+  //     location: 'Chicago, IL',
+  //     role: 'admin',
+  //     isVerified: true,
+  //     isActive: true,
+  //     preferences: {
+  //       create: {
+  //         emailNotifications: true,
+  //         pushNotifications: true,
+  //       },
+  //     },
+  //   },
+  // });
 
   // Admin user 2
+  // const adminUser2 = await prisma.user.upsert({
+  //   where: { email: 'godfredobot@gmail.com' },
+  //   update: { role: 'admin' },
+  //   create: {
+  //     firstName: 'Godfred',
+  //     lastName: 'Godwin',
+  //     email: 'godfredobot@gmail.com',
+  //     phone: '+13129999998',
+  //     countryCode: '+1',
+  //     bio: 'Platform Administrator',
+  //     location: 'Chicago, IL',
+  //     role: 'admin',
+  //     isVerified: true,
+  //     isActive: true,
+  //     preferences: {
+  //       create: {
+  //         emailNotifications: true,
+  //         pushNotifications: true,
+  //       },
+  //     },
+  //   },
+  // });
+
   const adminUser2 = await prisma.user.upsert({
-    where: { email: 'godfredobot@gmail.com' },
+    where: { email: 'ekegrant59@gmail.com' },
     update: { role: 'admin' },
     create: {
-      firstName: 'Godfred',
-      lastName: 'Godwin',
-      email: 'godfredobot@gmail.com',
-      phone: '+13129999998',
+      firstName: 'Grant',
+      lastName: 'Eke',
+      email: 'ekegrant59@gmail.com',
+      phone: '+13122222222',
       countryCode: '+1',
       bio: 'Platform Administrator',
       location: 'Chicago, IL',
@@ -86,7 +109,7 @@ async function main() {
     },
   });
 
-  console.log('Admin users:', adminUser.email, adminUser2.email);
+  console.log('Admin users:', adminUser2.email);
 
   // console.log('Created users:', user1.email, user2.email, adminUser.email);
 

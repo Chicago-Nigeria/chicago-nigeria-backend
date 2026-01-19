@@ -261,17 +261,17 @@ const adminController = {
         prisma.listing.count({ where: { status: 'pending' } }),
       ]);
 
-      // Calculate revenue from event tickets
-      const ticketRevenue = await prisma.ticket.aggregate({
-        _sum: {
-          totalPrice: true,
-        },
+      // Calculate revenue from service fees ($5 per ticket sold)
+      const ticketCount = await prisma.ticket.count({
         where: {
           status: 'confirmed',
+          event: {
+            isFree: false,
+          },
         },
       });
 
-      const revenue = ticketRevenue._sum.totalPrice || 0;
+      const revenue = ticketCount * 5; // $5 service fee per ticket
 
       // Get user growth data (last 7 months)
       const now = new Date();
@@ -318,10 +318,10 @@ const adminController = {
       ];
 
       // Calculate revenue by source
-      const eventTicketRevenue = ticketRevenue._sum.totalPrice || 0;
+      const eventServiceFeeRevenue = ticketCount * 5; // $5 per ticket
 
       const revenueBySource = [
-        { source: 'Event Tickets', amount: eventTicketRevenue },
+        { source: 'Event Service Fees', amount: eventServiceFeeRevenue },
         { source: 'Subscriptions', amount: 0 }, // Placeholder for future subscription system
         { source: 'Marketplace', amount: 0 }, // Placeholder for future marketplace fees
         { source: 'Ads', amount: 0 }, // Placeholder for future ad revenue
@@ -483,6 +483,55 @@ const adminController = {
   },
 
   // ==================== USER MANAGEMENT ====================
+
+  /**
+   * Search for a user by email (for organizer assignment)
+   */
+  searchUserByEmail: async (req, res, next) => {
+    try {
+      const { email } = req.query;
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email is required',
+        });
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { email: email.toLowerCase() },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          photo: true,
+          stripeAccount: {
+            select: {
+              chargesEnabled: true,
+            },
+          },
+        },
+      });
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'No user found with this email address',
+        });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          ...user,
+          hasStripeConnected: user.stripeAccount?.chargesEnabled || false,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 
   getAllUsers: async (req, res, next) => {
     try {
@@ -905,34 +954,21 @@ const adminController = {
     }
   },
 
-  // Get total service fees from all paid events (5% of ticket price)
+  // Get total service fees from all paid events ($5 per ticket)
   getEventServiceFees: async (req, res, next) => {
     try {
-      // Get all paid events (non-free events)
-      const paidEvents = await prisma.event.findMany({
+      // Count all tickets sold for paid events
+      const ticketCount = await prisma.ticket.count({
         where: {
-          isFree: false,
-          ticketPrice: { not: null },
-        },
-        select: {
-          id: true,
-          ticketPrice: true,
-          _count: {
-            select: {
-              tickets: true,
-            },
+          status: 'confirmed',
+          event: {
+            isFree: false,
           },
         },
       });
 
-      // Calculate total service fees (5% of each ticket sold)
-      let totalServiceFees = 0;
-
-      for (const event of paidEvents) {
-        const serviceFeePerTicket = (event.ticketPrice || 0) * 0.05;
-        const totalTicketsSold = event._count.tickets;
-        totalServiceFees += serviceFeePerTicket * totalTicketsSold;
-      }
+      // Calculate total service fees ($5 per ticket)
+      const totalServiceFees = ticketCount * 5;
 
       res.json({
         success: true,
@@ -946,6 +982,7 @@ const adminController = {
   },
 
   // Create event as admin (auto-approved, goes live immediately)
+  // Admin can assign a different user as the organizer
   createEvent: async (req, res, next) => {
     try {
       const {
@@ -964,7 +1001,36 @@ const adminController = {
         totalTickets,
         visibility,
         category,
+        organizerId, // NEW: Admin can specify which user is the organizer
       } = req.body;
+
+      // Determine the organizer - if organizerId is provided, use that user; otherwise use admin
+      let finalOrganizerId = req.user.id;
+
+      if (organizerId && organizerId !== req.user.id) {
+        // Verify the organizer exists
+        const organizer = await prisma.user.findUnique({
+          where: { id: organizerId },
+          include: {
+            stripeAccount: true,
+          },
+        });
+
+        if (!organizer) {
+          return res.status(400).json({
+            success: false,
+            message: 'Selected organizer not found',
+          });
+        }
+
+        finalOrganizerId = organizerId;
+
+        // Warn if paid event but organizer has no Stripe
+        const isPaidEvent = !(isFree === 'true' || isFree === true);
+        if (isPaidEvent && !organizer.stripeAccount?.chargesEnabled) {
+          console.log(`Warning: Creating paid event for organizer ${organizerId} who has not connected Stripe`);
+        }
+      }
 
       // Upload banner image to Cloudinary if provided
       let coverImage = null;
@@ -999,7 +1065,7 @@ const adminController = {
           totalTickets: totalTickets ? parseInt(totalTickets) : null,
           availableTickets: totalTickets ? parseInt(totalTickets) : null,
           status: 'upcoming', // Admin-created events are auto-approved
-          organizerId: req.user.id,
+          organizerId: finalOrganizerId,
         },
         include: {
           organizer: {
@@ -1008,6 +1074,11 @@ const adminController = {
               firstName: true,
               lastName: true,
               photo: true,
+              stripeAccount: {
+                select: {
+                  chargesEnabled: true,
+                },
+              },
             },
           },
         },
@@ -1019,7 +1090,12 @@ const adminController = {
         'create_event',
         'event',
         event.id,
-        { title, category, isFree: isFree === 'true' || isFree === true },
+        {
+          title,
+          category,
+          isFree: isFree === 'true' || isFree === true,
+          assignedOrganizerId: finalOrganizerId,
+        },
         req
       );
 
@@ -1214,6 +1290,806 @@ const adminController = {
       res.json({
         success: true,
         message: 'Listing deleted successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // ==================== PAYOUTS MANAGEMENT ====================
+
+  /**
+   * Get all payouts with filters
+   * Includes both Stripe and manual payouts
+   */
+  getAllPayouts: async (req, res, next) => {
+    try {
+      const { page = 1, limit = 20, status, payoutMethod } = req.query;
+
+      const where = {};
+
+      if (status) {
+        where.status = status;
+      }
+
+      if (payoutMethod) {
+        where.payoutMethod = payoutMethod;
+      }
+
+      const payouts = await prisma.payout.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+          payment: {
+            select: {
+              id: true,
+              totalAmount: true,
+              metadata: true,
+            },
+          },
+          stripeAccount: {
+            select: {
+              id: true,
+              stripeAccountId: true,
+              businessName: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (parseInt(page) - 1) * parseInt(limit),
+        take: parseInt(limit),
+      });
+
+      const total = await prisma.payout.count({ where });
+
+      // Format payouts for response
+      const formattedPayouts = payouts.map((payout) => ({
+        id: payout.id,
+        amount: payout.amount / 100, // Convert cents to dollars
+        status: payout.status,
+        payoutMethod: payout.payoutMethod,
+        scheduledFor: payout.scheduledFor,
+        processedAt: payout.processedAt,
+        organizer: payout.user,
+        eventId: payout.eventId,
+        stripeTransferId: payout.stripeTransferId,
+        hasStripeAccount: !!payout.stripeAccountId,
+        stripeAccountName: payout.stripeAccount?.businessName,
+        createdAt: payout.createdAt,
+      }));
+
+      res.json({
+        success: true,
+        data: formattedPayouts,
+        meta: {
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(total / parseInt(limit)),
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Get pending manual payouts (organizers without Stripe)
+   */
+  getPendingManualPayouts: async (req, res, next) => {
+    try {
+      const now = new Date();
+
+      const manualPayouts = await prisma.payout.findMany({
+        where: {
+          payoutMethod: 'manual',
+          status: 'pending',
+          scheduledFor: {
+            lte: now,
+          },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+            },
+          },
+          payment: {
+            select: {
+              id: true,
+              totalAmount: true,
+              metadata: true,
+            },
+          },
+        },
+        orderBy: { scheduledFor: 'asc' },
+      });
+
+      // Format for admin view
+      const formattedPayouts = manualPayouts.map((payout) => ({
+        id: payout.id,
+        amount: payout.amount / 100, // Convert cents to dollars
+        currency: payout.currency,
+        eventId: payout.eventId,
+        scheduledFor: payout.scheduledFor,
+        organizer: {
+          ...payout.user,
+          // Include contact info for manual payout
+        },
+        payment: payout.payment,
+        createdAt: payout.createdAt,
+      }));
+
+      res.json({
+        success: true,
+        data: formattedPayouts,
+        meta: {
+          total: formattedPayouts.length,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Mark a manual payout as paid
+   * Used after admin transfers funds outside of Stripe
+   */
+  markPayoutAsPaid: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { notes } = req.body;
+
+      const payout = await prisma.payout.findUnique({
+        where: { id },
+        include: {
+          user: {
+            select: {
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      if (!payout) {
+        return res.status(404).json({
+          success: false,
+          message: 'Payout not found',
+        });
+      }
+
+      if (payout.status !== 'pending') {
+        return res.status(400).json({
+          success: false,
+          message: `Payout is already ${payout.status}`,
+        });
+      }
+
+      // Update payout status
+      const updatedPayout = await prisma.payout.update({
+        where: { id },
+        data: {
+          status: 'paid',
+          processedAt: new Date(),
+        },
+      });
+
+      // Log admin action
+      await logAdminAction(
+        req.user.id,
+        'mark_payout_paid',
+        'payout',
+        id,
+        {
+          amount: payout.amount / 100,
+          organizer: `${payout.user.firstName} ${payout.user.lastName}`,
+          notes,
+        },
+        req
+      );
+
+      res.json({
+        success: true,
+        message: 'Payout marked as paid',
+        data: {
+          id: updatedPayout.id,
+          status: updatedPayout.status,
+          processedAt: updatedPayout.processedAt,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // ==================== PAYOUT MANAGEMENT ====================
+
+  /**
+   * Get payout statistics summary
+   */
+  getPayoutStats: async (req, res, next) => {
+    try {
+      const [
+        totalPending,
+        totalPaid,
+        totalFailed,
+        pendingStripe,
+        pendingManual,
+        pendingAmount,
+        paidAmount,
+      ] = await Promise.all([
+        prisma.payout.count({ where: { status: 'pending' } }),
+        prisma.payout.count({ where: { status: 'paid' } }),
+        prisma.payout.count({ where: { status: 'failed' } }),
+        prisma.payout.count({ where: { status: 'pending', payoutMethod: 'stripe' } }),
+        prisma.payout.count({ where: { status: 'pending', payoutMethod: 'manual' } }),
+        prisma.payout.aggregate({
+          _sum: { amount: true },
+          where: { status: 'pending' },
+        }),
+        prisma.payout.aggregate({
+          _sum: { amount: true },
+          where: { status: 'paid' },
+        }),
+      ]);
+
+      res.json({
+        success: true,
+        data: {
+          counts: {
+            pending: totalPending,
+            paid: totalPaid,
+            failed: totalFailed,
+            pendingStripe,
+            pendingManual,
+          },
+          amounts: {
+            pending: (pendingAmount._sum.amount || 0) / 100,
+            paid: (paidAmount._sum.amount || 0) / 100,
+          },
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Get all payouts with detailed filtering
+   */
+  getPayoutsDetailed: async (req, res, next) => {
+    try {
+      const { page = 1, limit = 20, status, payoutMethod, search } = req.query;
+
+      const where = {};
+
+      if (status && status !== 'all') {
+        where.status = status;
+      }
+
+      if (payoutMethod && payoutMethod !== 'all') {
+        where.payoutMethod = payoutMethod;
+      }
+
+      if (search) {
+        where.OR = [
+          { user: { firstName: { contains: search, mode: 'insensitive' } } },
+          { user: { lastName: { contains: search, mode: 'insensitive' } } },
+          { user: { email: { contains: search, mode: 'insensitive' } } },
+        ];
+      }
+
+      const payouts = await prisma.payout.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              stripeAccount: {
+                select: {
+                  stripeAccountId: true,
+                  chargesEnabled: true,
+                  payoutsEnabled: true,
+                  businessName: true,
+                },
+              },
+            },
+          },
+          payment: {
+            select: {
+              id: true,
+              totalAmount: true,
+              platformFee: true,
+              organizerAmount: true,
+              status: true,
+            },
+          },
+        },
+        orderBy: [
+          { status: 'asc' }, // pending first
+          { scheduledFor: 'asc' },
+        ],
+        skip: (parseInt(page) - 1) * parseInt(limit),
+        take: parseInt(limit),
+      });
+
+      const total = await prisma.payout.count({ where });
+
+      // Fetch events separately (Payout has eventId but no relation)
+      const eventIds = [...new Set(payouts.map(p => p.eventId).filter(Boolean))];
+      const events = eventIds.length > 0 ? await prisma.event.findMany({
+        where: { id: { in: eventIds } },
+        select: {
+          id: true,
+          title: true,
+          startDate: true,
+          endDate: true,
+          ticketPrice: true,
+        },
+      }) : [];
+      const eventsMap = new Map(events.map(e => [e.id, e]));
+
+      // Format payouts
+      const formattedPayouts = payouts.map((payout) => {
+        const event = payout.eventId ? eventsMap.get(payout.eventId) : null;
+        return {
+          id: payout.id,
+          amount: payout.amount / 100,
+          currency: payout.currency,
+          status: payout.status,
+          payoutMethod: payout.payoutMethod,
+          scheduledFor: payout.scheduledFor,
+          processedAt: payout.processedAt,
+          failureReason: payout.failureReason,
+          stripeTransferId: payout.stripeTransferId,
+          organizer: {
+            id: payout.user.id,
+            name: `${payout.user.firstName} ${payout.user.lastName}`,
+            email: payout.user.email,
+            phone: payout.user.phone,
+            hasStripe: payout.user.stripeAccount?.chargesEnabled || false,
+            stripeAccountId: payout.user.stripeAccount?.stripeAccountId || null,
+          },
+          event: event ? {
+            id: event.id,
+            title: event.title,
+            startDate: event.startDate,
+            endDate: event.endDate,
+            ticketPrice: event.ticketPrice,
+          } : null,
+          createdAt: payout.createdAt,
+        };
+      });
+
+      res.json({
+        success: true,
+        data: formattedPayouts,
+        meta: {
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(total / parseInt(limit)),
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Process all pending Stripe payouts (for events that have ended)
+   */
+  processStripePayout: async (req, res, next) => {
+    try {
+      const stripe = require('../config/stripe').stripe;
+      const now = new Date();
+
+      // Find pending STRIPE payouts for events that have ended
+      const pendingPayouts = await prisma.payout.findMany({
+        where: {
+          status: 'pending',
+          payoutMethod: 'stripe',
+          stripeAccountId: { not: null },
+          scheduledFor: { lte: now },
+        },
+        include: {
+          stripeAccount: true,
+          user: {
+            select: {
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      if (pendingPayouts.length === 0) {
+        return res.json({
+          success: true,
+          message: 'No pending Stripe payouts to process',
+          data: { processed: 0, results: [] },
+        });
+      }
+
+      const results = [];
+
+      for (const payout of pendingPayouts) {
+        try {
+          // Create transfer to connected account
+          const transfer = await stripe.transfers.create({
+            amount: payout.amount,
+            currency: payout.currency,
+            destination: payout.stripeAccount.stripeAccountId,
+            transfer_group: `event_${payout.eventId}`,
+            metadata: {
+              payoutId: payout.id,
+              eventId: payout.eventId,
+              paymentId: payout.paymentId,
+            },
+          });
+
+          // Update payout status
+          await prisma.payout.update({
+            where: { id: payout.id },
+            data: {
+              status: 'paid',
+              stripeTransferId: transfer.id,
+              processedAt: new Date(),
+            },
+          });
+
+          // Log admin action
+          await logAdminAction(
+            req.user.id,
+            'process_stripe_payout',
+            'payout',
+            payout.id,
+            {
+              amount: payout.amount / 100,
+              organizer: `${payout.user.firstName} ${payout.user.lastName}`,
+              transferId: transfer.id,
+            },
+            req
+          );
+
+          results.push({
+            payoutId: payout.id,
+            status: 'success',
+            transferId: transfer.id,
+            amount: payout.amount / 100,
+          });
+        } catch (error) {
+          // Update payout with failure
+          await prisma.payout.update({
+            where: { id: payout.id },
+            data: {
+              status: 'failed',
+              failureReason: error.message,
+            },
+          });
+
+          results.push({
+            payoutId: payout.id,
+            status: 'failed',
+            error: error.message,
+          });
+        }
+      }
+
+      const successCount = results.filter(r => r.status === 'success').length;
+      const failedCount = results.filter(r => r.status === 'failed').length;
+
+      res.json({
+        success: true,
+        message: `Processed ${results.length} payouts: ${successCount} succeeded, ${failedCount} failed`,
+        data: {
+          processed: results.length,
+          succeeded: successCount,
+          failed: failedCount,
+          results,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Process Stripe payout for a specific event
+   */
+  processEventPayout: async (req, res, next) => {
+    try {
+      const { eventId } = req.params;
+      const stripe = require('../config/stripe').stripe;
+
+      // Find all pending Stripe payouts for this event
+      const pendingPayouts = await prisma.payout.findMany({
+        where: {
+          eventId,
+          status: 'pending',
+          payoutMethod: 'stripe',
+          stripeAccountId: { not: null },
+        },
+        include: {
+          stripeAccount: true,
+          user: {
+            select: {
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      if (pendingPayouts.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'No pending Stripe payouts found for this event',
+        });
+      }
+
+      // Fetch event title separately
+      const event = await prisma.event.findUnique({
+        where: { id: eventId },
+        select: { title: true },
+      });
+
+      const results = [];
+
+      for (const payout of pendingPayouts) {
+        try {
+          // Create transfer to connected account
+          const transfer = await stripe.transfers.create({
+            amount: payout.amount,
+            currency: payout.currency,
+            destination: payout.stripeAccount.stripeAccountId,
+            transfer_group: `event_${payout.eventId}`,
+            metadata: {
+              payoutId: payout.id,
+              eventId: payout.eventId,
+              paymentId: payout.paymentId,
+            },
+          });
+
+          // Update payout status
+          await prisma.payout.update({
+            where: { id: payout.id },
+            data: {
+              status: 'paid',
+              stripeTransferId: transfer.id,
+              processedAt: new Date(),
+            },
+          });
+
+          // Log admin action
+          await logAdminAction(
+            req.user.id,
+            'process_event_payout',
+            'payout',
+            payout.id,
+            {
+              eventId,
+              amount: payout.amount / 100,
+              organizer: `${payout.user.firstName} ${payout.user.lastName}`,
+              transferId: transfer.id,
+            },
+            req
+          );
+
+          results.push({
+            payoutId: payout.id,
+            status: 'success',
+            transferId: transfer.id,
+            amount: payout.amount / 100,
+          });
+        } catch (error) {
+          // Update payout with failure
+          await prisma.payout.update({
+            where: { id: payout.id },
+            data: {
+              status: 'failed',
+              failureReason: error.message,
+            },
+          });
+
+          results.push({
+            payoutId: payout.id,
+            status: 'failed',
+            error: error.message,
+          });
+        }
+      }
+
+      const successCount = results.filter(r => r.status === 'success').length;
+      const failedCount = results.filter(r => r.status === 'failed').length;
+      const totalAmount = results
+        .filter(r => r.status === 'success')
+        .reduce((sum, r) => sum + r.amount, 0);
+
+      res.json({
+        success: true,
+        message: `Processed ${results.length} payouts for event: ${successCount} succeeded, ${failedCount} failed`,
+        data: {
+          eventId,
+          eventTitle: event?.title,
+          processed: results.length,
+          succeeded: successCount,
+          failed: failedCount,
+          totalAmount,
+          results,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Migrate a specific organizer's manual payouts to Stripe
+   * (after they've connected their Stripe account)
+   */
+  migrateManualToStripe: async (req, res, next) => {
+    try {
+      const { userId } = req.params;
+
+      // Check if user has Stripe connected
+      const stripeAccount = await prisma.stripeAccount.findUnique({
+        where: { userId },
+      });
+
+      if (!stripeAccount) {
+        return res.status(400).json({
+          success: false,
+          message: 'User has not connected a Stripe account',
+        });
+      }
+
+      if (!stripeAccount.chargesEnabled || !stripeAccount.payoutsEnabled) {
+        return res.status(400).json({
+          success: false,
+          message: 'User\'s Stripe account is not fully enabled',
+        });
+      }
+
+      // Migrate all pending manual payouts to Stripe
+      const result = await prisma.payout.updateMany({
+        where: {
+          userId,
+          payoutMethod: 'manual',
+          status: 'pending',
+        },
+        data: {
+          payoutMethod: 'stripe',
+          stripeAccountId: stripeAccount.id,
+        },
+      });
+
+      // Log admin action
+      await logAdminAction(
+        req.user.id,
+        'migrate_payouts_to_stripe',
+        'user',
+        userId,
+        { migratedCount: result.count },
+        req
+      );
+
+      res.json({
+        success: true,
+        message: `Migrated ${result.count} pending payouts to Stripe`,
+        data: { migratedCount: result.count },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  /**
+   * Retry a failed payout
+   */
+  retryPayout: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const stripe = require('../config/stripe').stripe;
+
+      const payout = await prisma.payout.findUnique({
+        where: { id },
+        include: {
+          stripeAccount: true,
+          user: {
+            select: {
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      if (!payout) {
+        return res.status(404).json({
+          success: false,
+          message: 'Payout not found',
+        });
+      }
+
+      if (payout.status !== 'failed') {
+        return res.status(400).json({
+          success: false,
+          message: 'Can only retry failed payouts',
+        });
+      }
+
+      if (payout.payoutMethod !== 'stripe' || !payout.stripeAccount) {
+        return res.status(400).json({
+          success: false,
+          message: 'Can only retry Stripe payouts',
+        });
+      }
+
+      // Try the transfer again
+      const transfer = await stripe.transfers.create({
+        amount: payout.amount,
+        currency: payout.currency,
+        destination: payout.stripeAccount.stripeAccountId,
+        transfer_group: `event_${payout.eventId}`,
+        metadata: {
+          payoutId: payout.id,
+          eventId: payout.eventId,
+          paymentId: payout.paymentId,
+          isRetry: 'true',
+        },
+      });
+
+      // Update payout status
+      await prisma.payout.update({
+        where: { id },
+        data: {
+          status: 'paid',
+          stripeTransferId: transfer.id,
+          processedAt: new Date(),
+          failureReason: null,
+        },
+      });
+
+      // Log admin action
+      await logAdminAction(
+        req.user.id,
+        'retry_payout',
+        'payout',
+        id,
+        {
+          amount: payout.amount / 100,
+          organizer: `${payout.user.firstName} ${payout.user.lastName}`,
+          transferId: transfer.id,
+        },
+        req
+      );
+
+      res.json({
+        success: true,
+        message: 'Payout retried successfully',
+        data: {
+          transferId: transfer.id,
+          amount: payout.amount / 100,
+        },
       });
     } catch (error) {
       next(error);
