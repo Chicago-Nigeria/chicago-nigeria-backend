@@ -31,6 +31,7 @@ const authenticate = async (req, res, next) => {
         email: true,
         phone: true,
         photo: true,
+        headerImage: true,
         bio: true,
         location: true,
         profession: true,
@@ -67,6 +68,58 @@ const authenticate = async (req, res, next) => {
       success: false,
       message: 'Invalid token',
     });
+  }
+};
+
+// Optional authentication - sets req.user if valid token, otherwise null
+const optionalAuth = async (req, res, next) => {
+  try {
+    let token = req.cookies.accessToken;
+
+    if (!token && req.headers.authorization) {
+      const authHeader = req.headers.authorization;
+      if (authHeader.startsWith('Bearer ')) {
+        token = authHeader.substring(7);
+      }
+    }
+
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        photo: true,
+        headerImage: true,
+        bio: true,
+        location: true,
+        profession: true,
+        company: true,
+        isVerified: true,
+        isActive: true,
+      },
+    });
+
+    if (!user || !user.isActive || !user.isVerified) {
+      req.user = null;
+      return next();
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    // Token invalid or expired - continue without user
+    req.user = null;
+    next();
   }
 };
 
@@ -135,4 +188,4 @@ const authenticateAdmin = async (req, res, next) => {
   }
 };
 
-module.exports = { authenticate, authenticateAdmin };
+module.exports = { authenticate, optionalAuth, authenticateAdmin };

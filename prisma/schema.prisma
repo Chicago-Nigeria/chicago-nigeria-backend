@@ -17,6 +17,7 @@ model User {
   phone         String   @unique
   countryCode   String   @default("+1")
   photo         String?
+  headerImage   String?
   bio           String?
   location      String?
   profession    String?
@@ -46,6 +47,11 @@ model User {
   otpCodes      OTPCode[]
   refreshTokens RefreshToken[]
   adminAuditLogs AdminAuditLog[] @relation("AdminAuditLogs")
+  promotedContent PromotedContent[]
+
+  // Follow relations
+  followers     Follow[] @relation("Following")
+  following     Follow[] @relation("Followers")
 
   // Stripe Connect (for event organizers)
   stripeAccount  StripeAccount?
@@ -75,6 +81,19 @@ model UserPreferences {
 
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+}
+
+model Follow {
+  id          String   @id @default(uuid())
+  followerId  String
+  followingId String
+  follower    User     @relation("Followers", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
 }
 
 model OTPCode {
@@ -166,6 +185,7 @@ model Event {
   likes           Like[]
   saves           Save[]
   comments        Comment[]
+  promotions      PromotedContent[]
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -244,6 +264,7 @@ model Post {
   id          String   @id @default(uuid())
   content     String
   images      String[] // Array of image URLs
+  videos      String[] // Array of video URLs
   type        String   @default("post") // "post", "article", "poll"
 
   authorId    String
@@ -258,6 +279,7 @@ model Post {
 
   @@index([authorId])
   @@index([createdAt])
+  @@index([type])
 }
 
 model Comment {
@@ -422,6 +444,42 @@ model AdminAuditLog {
   @@index([adminId])
   @@index([targetType, targetId])
   @@index([createdAt])
+}
+
+// ==================== PROMOTED CONTENT ====================
+
+model PromotedContent {
+  id              String   @id @default(uuid())
+
+  contentType     String   // "event", "ad"
+  eventId         String?
+  event           Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  // Future ad fields (placeholder)
+  adTitle         String?
+  adDescription   String?
+  adImage         String?
+  adUrl           String?
+  adCtaText       String?
+
+  isActive        Boolean  @default(true)
+  priority        Int      @default(0)
+  startDate       DateTime @default(now())
+  endDate         DateTime?
+
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  lastShownAt     DateTime?
+
+  promotedById    String
+  promotedBy      User     @relation(fields: [promotedById], references: [id])
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([contentType, isActive])
+  @@index([priority])
+  @@index([eventId])
 }
 
 // ==================== PAYMENTS (Stripe Connect) ====================

@@ -59,4 +59,16 @@ router.put('/payouts/migrate/:userId', adminController.migrateManualToStripe);
 // Audit logs
 router.get('/audit-logs', adminController.getAuditLogs);
 
+// Blog post management
+router.get('/posts', adminController.getAdminPosts);
+router.post('/posts', upload.array('media', 10), adminController.createBlogPost);
+router.delete('/posts/:id', adminController.deleteBlogPost);
+
+// Promoted content management
+router.get('/promoted-content', adminController.getPromotedContent);
+router.post('/promoted-content', adminController.createPromotedContent);
+router.put('/promoted-content/:id', adminController.updatePromotedContent);
+router.delete('/promoted-content/:id', adminController.deletePromotedContent);
+router.put('/promoted-content/:id/toggle', adminController.togglePromotedContent);
+
 module.exports = router;

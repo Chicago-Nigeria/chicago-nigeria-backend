@@ -15,6 +15,7 @@ const messageRoutes = require('./routes/message.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const adminRoutes = require('./routes/admin.routes');
 const paymentRoutes = require('./routes/payment.routes');
+const feedRoutes = require('./routes/feed.routes');
 const webhookController = require('./controllers/webhook.controller');
 
 // Import middleware
@@ -76,6 +77,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/feed', feedRoutes);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);

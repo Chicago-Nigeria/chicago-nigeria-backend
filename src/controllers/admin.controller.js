@@ -2150,6 +2150,527 @@ const adminController = {
       next(error);
     }
   },
+
+  // ==================== BLOG POST MANAGEMENT ====================
+
+  // Get all admin blog posts
+  getAdminPosts: async (req, res, next) => {
+    try {
+      const { page = 1, limit = 20, search } = req.query;
+
+      const where = {
+        type: 'blog',
+        author: {
+          role: { in: ['admin', 'super_admin'] },
+        },
+      };
+
+      if (search) {
+        where.content = { contains: search, mode: 'insensitive' };
+      }
+
+      const posts = await prisma.post.findMany({
+        where,
+        include: {
+          author: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              photo: true,
+              role: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+              saves: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (parseInt(page) - 1) * parseInt(limit),
+        take: parseInt(limit),
+      });
+
+      const total = await prisma.post.count({ where });
+
+      res.json({
+        success: true,
+        data: posts,
+        meta: {
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(total / parseInt(limit)),
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Create a blog post (admin only)
+  createBlogPost: async (req, res, next) => {
+    try {
+      const { content } = req.body;
+      const adminId = req.user.id;
+
+      if (!content || content.trim().length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Blog post content is required',
+        });
+      }
+
+      const imageUrls = [];
+      const videoUrls = [];
+
+      // Upload media files to Cloudinary
+      if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+          if (file.mimetype.startsWith('video/')) {
+            const { uploadVideoToCloudinary } = require('../utils/cloudinary');
+            const url = await uploadVideoToCloudinary(file.buffer, 'blog', adminId);
+            videoUrls.push(url);
+          } else {
+            const url = await uploadToCloudinary(file.buffer, 'blog', adminId);
+            imageUrls.push(url);
+          }
+        }
+      }
+
+      const post = await prisma.post.create({
+        data: {
+          content: content.trim(),
+          type: 'blog',
+          images: imageUrls,
+          videos: videoUrls,
+          authorId: adminId,
+        },
+        include: {
+          author: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              photo: true,
+              role: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+              saves: true,
+            },
+          },
+        },
+      });
+
+      // Log admin action
+      await logAdminAction(
+        adminId,
+        'create_blog_post',
+        'post',
+        post.id,
+        { contentPreview: content.substring(0, 100) },
+        req
+      );
+
+      res.status(201).json({
+        success: true,
+        message: 'Blog post created successfully',
+        data: post,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Delete a blog post
+  deleteBlogPost: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+
+      const post = await prisma.post.findUnique({
+        where: { id },
+      });
+
+      if (!post) {
+        return res.status(404).json({
+          success: false,
+          message: 'Blog post not found',
+        });
+      }
+
+      if (post.type !== 'blog') {
+        return res.status(400).json({
+          success: false,
+          message: 'This is not a blog post',
+        });
+      }
+
+      // Log admin action before deletion
+      await logAdminAction(
+        req.user.id,
+        'delete_blog_post',
+        'post',
+        id,
+        { contentPreview: post.content.substring(0, 100) },
+        req
+      );
+
+      await prisma.post.delete({
+        where: { id },
+      });
+
+      res.json({
+        success: true,
+        message: 'Blog post deleted successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // ==================== PROMOTED CONTENT MANAGEMENT ====================
+
+  // Get all promoted content
+  getPromotedContent: async (req, res, next) => {
+    try {
+      const { page = 1, limit = 20, contentType, isActive } = req.query;
+
+      const where = {};
+
+      if (contentType) {
+        where.contentType = contentType;
+      }
+
+      if (isActive !== undefined) {
+        where.isActive = isActive === 'true';
+      }
+
+      const promotedContent = await prisma.promotedContent.findMany({
+        where,
+        include: {
+          event: {
+            include: {
+              organizer: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+              _count: {
+                select: {
+                  registrations: true,
+                  tickets: true,
+                },
+              },
+            },
+          },
+          promotedBy: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+        orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+        skip: (parseInt(page) - 1) * parseInt(limit),
+        take: parseInt(limit),
+      });
+
+      const total = await prisma.promotedContent.count({ where });
+
+      res.json({
+        success: true,
+        data: promotedContent,
+        meta: {
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          totalPages: Math.ceil(total / parseInt(limit)),
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Create promoted content (promote an event)
+  createPromotedContent: async (req, res, next) => {
+    try {
+      const { eventId, priority = 0, startDate, endDate } = req.body;
+      const adminId = req.user.id;
+
+      if (!eventId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Event ID is required',
+        });
+      }
+
+      // Verify event exists and is active
+      const event = await prisma.event.findUnique({
+        where: { id: eventId },
+      });
+
+      if (!event) {
+        return res.status(404).json({
+          success: false,
+          message: 'Event not found',
+        });
+      }
+
+      if (!['upcoming', 'ongoing', 'approved'].includes(event.status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Can only promote upcoming or ongoing events',
+        });
+      }
+
+      // Check if event is already promoted
+      const existingPromotion = await prisma.promotedContent.findFirst({
+        where: {
+          eventId,
+          isActive: true,
+        },
+      });
+
+      if (existingPromotion) {
+        return res.status(400).json({
+          success: false,
+          message: 'This event is already being promoted',
+        });
+      }
+
+      const promotedContent = await prisma.promotedContent.create({
+        data: {
+          contentType: 'event',
+          eventId,
+          priority: parseInt(priority),
+          startDate: startDate ? new Date(startDate) : new Date(),
+          endDate: endDate ? new Date(endDate) : null,
+          promotedById: adminId,
+        },
+        include: {
+          event: {
+            include: {
+              organizer: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+            },
+          },
+          promotedBy: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      // Log admin action
+      await logAdminAction(
+        adminId,
+        'create_promotion',
+        'promoted_content',
+        promotedContent.id,
+        { eventId, eventTitle: event.title, priority },
+        req
+      );
+
+      res.status(201).json({
+        success: true,
+        message: 'Event promoted successfully',
+        data: promotedContent,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Update promoted content
+  updatePromotedContent: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { priority, startDate, endDate } = req.body;
+
+      const existing = await prisma.promotedContent.findUnique({
+        where: { id },
+      });
+
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: 'Promoted content not found',
+        });
+      }
+
+      const updateData = {};
+      if (priority !== undefined) updateData.priority = parseInt(priority);
+      if (startDate) updateData.startDate = new Date(startDate);
+      if (endDate !== undefined) updateData.endDate = endDate ? new Date(endDate) : null;
+
+      const updated = await prisma.promotedContent.update({
+        where: { id },
+        data: updateData,
+        include: {
+          event: {
+            include: {
+              organizer: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+            },
+          },
+          promotedBy: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      // Log admin action
+      await logAdminAction(
+        req.user.id,
+        'update_promotion',
+        'promoted_content',
+        id,
+        updateData,
+        req
+      );
+
+      res.json({
+        success: true,
+        message: 'Promotion updated successfully',
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Delete promoted content
+  deletePromotedContent: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+
+      const existing = await prisma.promotedContent.findUnique({
+        where: { id },
+        include: {
+          event: {
+            select: { title: true },
+          },
+        },
+      });
+
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: 'Promoted content not found',
+        });
+      }
+
+      // Log admin action before deletion
+      await logAdminAction(
+        req.user.id,
+        'delete_promotion',
+        'promoted_content',
+        id,
+        { eventTitle: existing.event?.title },
+        req
+      );
+
+      await prisma.promotedContent.delete({
+        where: { id },
+      });
+
+      res.json({
+        success: true,
+        message: 'Promotion removed successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Toggle promoted content active status
+  togglePromotedContent: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+
+      const existing = await prisma.promotedContent.findUnique({
+        where: { id },
+      });
+
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: 'Promoted content not found',
+        });
+      }
+
+      const updated = await prisma.promotedContent.update({
+        where: { id },
+        data: { isActive: !existing.isActive },
+        include: {
+          event: {
+            include: {
+              organizer: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                },
+              },
+            },
+          },
+          promotedBy: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      // Log admin action
+      await logAdminAction(
+        req.user.id,
+        updated.isActive ? 'activate_promotion' : 'deactivate_promotion',
+        'promoted_content',
+        id,
+        { isActive: updated.isActive },
+        req
+      );
+
+      res.json({
+        success: true,
+        message: `Promotion ${updated.isActive ? 'activated' : 'deactivated'} successfully`,
+        data: updated,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
 module.exports = adminController;

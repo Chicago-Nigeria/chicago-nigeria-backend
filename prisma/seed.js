@@ -5,62 +5,62 @@ async function main() {
   console.log('Starting seed...');
 
   // Keep user1 as is
-  // const user1 = await prisma.user.create({
-  //   data: {
-  //     firstName: 'Grant',
-  //     lastName: 'Eke',
-  //     email: 'ekegrant59@example.com',
-  //     phone: '+13123456789',
-  //     countryCode: '+1',
-  //     bio: 'Nigerian tech enthusiast in Chicago',
-  //     location: 'Chicago, IL',
-  //     isVerified: true,
-  //     preferences: {
-  //       create: {
-  //         emailNotifications: true,
-  //         pushNotifications: true,
-  //       },
-  //     },
-  //   },
-  // });
+  const user1 = await prisma.user.create({
+    data: {
+      firstName: 'Grant',
+      lastName: 'Eke',
+      email: 'lilgranted0024@gmail.com',
+      phone: '+13123456789',
+      countryCode: '+1',
+      bio: 'Nigerian tech enthusiast in Chicago',
+      location: 'Chicago, IL',
+      isVerified: true,
+      preferences: {
+        create: {
+          emailNotifications: true,
+          pushNotifications: true,
+        },
+      },
+    },
+  });
 
   // Updated user2
-  // const user2 = await prisma.user.create({
-  //   data: {
-  //     firstName: 'Amaka',
-  //     lastName: 'Okafor',
-  //     email: 'amaka.okafor@example.com',
-  //     phone: '+13126667788',
-  //     countryCode: '+1',
-  //     bio: 'Entrepreneur and cultural advocate',
-  //     location: 'Chicago, IL',
-  //     isVerified: false,
-  //   },
-  // });
+  const user2 = await prisma.user.create({
+    data: {
+      firstName: 'Amaka',
+      lastName: 'Okafor',
+      email: 'amaka.okafor@example.com',
+      phone: '+13126667788',
+      countryCode: '+1',
+      bio: 'Entrepreneur and cultural advocate',
+      location: 'Chicago, IL',
+      isVerified: false,
+    },
+  });
 
   // Admin user 1
-  // const adminUser = await prisma.user.upsert({
-  //   where: { email: 'chicagonigerians14@gmail.com' },
-  //   update: {},
-  //   create: {
-  //     firstName: 'Admin',
-  //     lastName: 'User',
-  //     email: 'chicagonigerians14@gmail.com',
-  //     phone: '+13129999999',
-  //     countryCode: '+1',
-  //     bio: 'Platform Administrator',
-  //     location: 'Chicago, IL',
-  //     role: 'admin',
-  //     isVerified: true,
-  //     isActive: true,
-  //     preferences: {
-  //       create: {
-  //         emailNotifications: true,
-  //         pushNotifications: true,
-  //       },
-  //     },
-  //   },
-  // });
+  const adminUser = await prisma.user.upsert({
+    where: { email: 'chicagonigerians14@gmail.com' },
+    update: {},
+    create: {
+      firstName: 'Admin',
+      lastName: 'User',
+      email: 'chicagonigerians14@gmail.com',
+      phone: '+13129999999',
+      countryCode: '+1',
+      bio: 'Platform Administrator',
+      location: 'Chicago, IL',
+      role: 'admin',
+      isVerified: true,
+      isActive: true,
+      preferences: {
+        create: {
+          emailNotifications: true,
+          pushNotifications: true,
+        },
+      },
+    },
+  });
 
   // Admin user 2
   // const adminUser2 = await prisma.user.upsert({

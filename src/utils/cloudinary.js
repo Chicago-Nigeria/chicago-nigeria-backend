@@ -40,6 +40,41 @@ const uploadToCloudinary = (fileBuffer, uploadType, userId) => {
 };
 
 /**
+ * Upload video to Cloudinary
+ * @param {Buffer} fileBuffer - File buffer from multer
+ * @param {string} uploadType - Type of upload: 'profile', 'event', 'listing', 'post'
+ * @param {string} userId - User ID for organizing uploads
+ * @returns {Promise<string>} - Cloudinary secure URL
+ */
+const uploadVideoToCloudinary = (fileBuffer, uploadType, userId) => {
+  return new Promise((resolve, reject) => {
+    const folder = `chicago-nigeria/${uploadType}s/videos`;
+
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: folder,
+        resource_type: 'video',
+        public_id: `${userId}-${Date.now()}`,
+        transformation: [
+          { width: 1280, height: 720, crop: 'limit' },
+          { quality: 'auto' },
+        ],
+      },
+      (error, result) => {
+        if (error) {
+          console.error('Cloudinary video upload error:', error);
+          reject(new Error('Failed to upload video to Cloudinary'));
+        } else {
+          resolve(result.secure_url);
+        }
+      }
+    );
+
+    uploadStream.end(fileBuffer);
+  });
+};
+
+/**
  * Delete image from Cloudinary
  * @param {string} publicId - Cloudinary public ID
  * @returns {Promise<void>}
@@ -69,6 +104,7 @@ const getPublicIdFromUrl = (url) => {
 
 module.exports = {
   uploadToCloudinary,
+  uploadVideoToCloudinary,
   deleteFromCloudinary,
   getPublicIdFromUrl,
 };
