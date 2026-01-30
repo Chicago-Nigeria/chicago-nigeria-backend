@@ -466,7 +466,7 @@ const postController = {
     }
   },
 
-  // Update post
+  // Update post (only within 1 hour of creation)
   updatePost: async (req, res, next) => {
     try {
       const { id } = req.params;
@@ -488,6 +488,17 @@ const postController = {
         return res.status(403).json({
           success: false,
           message: 'Not authorized to update this post',
+        });
+      }
+
+      // Check if post is within 1-hour edit window
+      const oneHourInMs = 60 * 60 * 1000;
+      const postAge = Date.now() - new Date(post.createdAt).getTime();
+
+      if (postAge > oneHourInMs) {
+        return res.status(403).json({
+          success: false,
+          message: 'Posts can only be edited within 1 hour of creation',
         });
       }
 
