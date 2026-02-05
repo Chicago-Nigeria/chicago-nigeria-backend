@@ -18,6 +18,7 @@ router.get('/suggestions', authenticate, userController.getSuggestions);
 router.get('/:id', optionalAuth, userController.getPublicProfile);
 router.get('/:id/posts', optionalAuth, userController.getUserPosts);
 router.get('/:id/events', optionalAuth, userController.getUserEvents);
+router.get('/:id/listings', optionalAuth, userController.getUserListings);
 router.get('/:id/followers', optionalAuth, userController.getFollowers);
 router.get('/:id/following', optionalAuth, userController.getFollowing);
 

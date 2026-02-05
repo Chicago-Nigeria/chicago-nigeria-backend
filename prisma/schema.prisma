@@ -131,11 +131,26 @@ model Listing {
   title       String
   description String
   price       Float
+  currency    String   @default("USD") // "USD", "NGN"
+  priceType   String   @default("fixed") // "fixed", "negotiable"
   category    String
-  condition   String   @default("new") // "new", "used", "refurbished"
+  condition   String   @default("new") // "new", "like-new", "good", "fair"
   images      String[] // Array of image URLs
   location    String?
-  status      String   @default("active") // "active", "sold", "archived"
+  tags        String[] // Array of tags
+
+  // Contact info
+  phoneNumber    String?
+  email          String?
+  whatsappNumber String?
+
+  // Status: pending (awaiting approval), active (approved), flagged, sold, archived
+  status      String   @default("pending")
+
+  // Admin review
+  reviewedAt  DateTime?
+  reviewedBy  String?
+  flagReason  String?
 
   sellerId    String
   seller      User     @relation(fields: [sellerId], references: [id], onDelete: Cascade)
@@ -143,6 +158,7 @@ model Listing {
   likes       Like[]
   saves       Save[]
   comments    Comment[]
+  views       ListingView[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -150,6 +166,29 @@ model Listing {
   @@index([sellerId])
   @@index([category])
   @@index([status])
+  @@index([createdAt])
+}
+
+// Listing View/Impression tracking
+model ListingView {
+  id          String   @id @default(uuid())
+
+  listingId   String
+  listing     Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  // Optional user tracking (null for anonymous views)
+  userId      String?
+
+  // View metadata
+  source      String?  // "search", "category", "direct", "related", "profile"
+  userAgent   String?
+  ipHash      String?  // Hashed IP for deduplication (not storing raw IP)
+
+  createdAt   DateTime @default(now())
+
+  @@index([listingId])
+  @@index([listingId, createdAt])
+  @@index([userId])
   @@index([createdAt])
 }
 

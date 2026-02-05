@@ -42,6 +42,7 @@ router.delete('/events/:id', adminController.deleteEvent);
 router.get('/listings', adminController.getAllListings);
 router.get('/listings/:id', adminController.getListingById);
 router.put('/listings/:id/approve', adminController.approveListing);
+router.put('/listings/:id/reject', adminController.rejectListing);
 router.put('/listings/:id/flag', adminController.flagListing);
 router.delete('/listings/:id', adminController.deleteListing);
 
@@ -62,6 +63,7 @@ router.get('/audit-logs', adminController.getAuditLogs);
 // Blog post management
 router.get('/posts', adminController.getAdminPosts);
 router.post('/posts', upload.array('media', 10), adminController.createBlogPost);
+router.put('/posts/:id', adminController.updateBlogPost);
 router.delete('/posts/:id', adminController.deleteBlogPost);
 
 // Promoted content management

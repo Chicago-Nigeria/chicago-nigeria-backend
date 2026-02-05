@@ -208,6 +208,59 @@ const userController = {
     }
   },
 
+  // Get user's marketplace listings
+  getUserListings: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { cursor, limit = 10 } = req.query;
+
+      const listings = await prisma.listing.findMany({
+        where: {
+          sellerId: id,
+          status: 'active',
+        },
+        take: parseInt(limit) + 1,
+        ...(cursor && {
+          cursor: { id: cursor },
+          skip: 1,
+        }),
+        orderBy: { createdAt: 'desc' },
+        include: {
+          seller: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              photo: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              saves: true,
+              comments: true,
+              views: true,
+            },
+          },
+        },
+      });
+
+      const hasMore = listings.length > parseInt(limit);
+      const data = hasMore ? listings.slice(0, -1) : listings;
+
+      res.json({
+        success: true,
+        data,
+        meta: {
+          hasMore,
+          nextCursor: hasMore ? data[data.length - 1]?.id : null,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   // Get user's followers
   getFollowers: async (req, res, next) => {
     try {

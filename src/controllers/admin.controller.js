@@ -1114,7 +1114,10 @@ const adminController = {
 
   getAllListings: async (req, res, next) => {
     try {
-      const { page = 1, limit = 20, search, status, category } = req.query;
+      const { search, status, category } = req.query;
+      // Parse and validate pagination params BEFORE using them
+      const parsedPage = Math.max(1, parseInt(req.query.page) || 1);
+      const parsedLimit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
 
       const where = {};
 
@@ -1149,24 +1152,27 @@ const adminController = {
               likes: true,
               saves: true,
               comments: true,
+              views: true,
             },
           },
         },
         orderBy: { createdAt: 'desc' },
-        skip: (parseInt(page) - 1) * parseInt(limit),
-        take: parseInt(limit),
+        skip: (parsedPage - 1) * parsedLimit,
+        take: parsedLimit,
       });
 
       const total = await prisma.listing.count({ where });
 
       res.json({
         success: true,
-        data: listings,
-        meta: {
-          total,
-          page: parseInt(page),
-          limit: parseInt(limit),
-          totalPages: Math.ceil(total / parseInt(limit)),
+        data: {
+          data: listings,
+          meta: {
+            total,
+            page: parsedPage,
+            limit: parsedLimit,
+            totalPages: Math.ceil(total / parsedLimit),
+          },
         },
       });
     } catch (error) {
@@ -1181,16 +1187,22 @@ const adminController = {
       const listing = await prisma.listing.findUnique({
         where: { id },
         include: {
-          seller: true,
-          likes: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                },
-              },
+          seller: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              photo: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              saves: true,
+              comments: true,
+              views: true,
             },
           },
         },
@@ -1216,9 +1228,35 @@ const adminController = {
     try {
       const { id } = req.params;
 
+      const existingListing = await prisma.listing.findUnique({
+        where: { id },
+      });
+
+      if (!existingListing) {
+        return res.status(404).json({
+          success: false,
+          message: 'Listing not found',
+        });
+      }
+
       const listing = await prisma.listing.update({
         where: { id },
-        data: { status: 'active' },
+        data: {
+          status: 'active',
+          reviewedAt: new Date(),
+          reviewedBy: req.user.id,
+          flagReason: null,
+        },
+        include: {
+          seller: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
       });
 
       await logAdminAction(
@@ -1226,13 +1264,79 @@ const adminController = {
         'approve_listing',
         'listing',
         id,
-        {},
+        { title: listing.title },
         req
       );
+
+      // TODO: Send notification to seller that listing has been approved
 
       res.json({
         success: true,
         message: 'Listing approved successfully',
+        data: listing,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  rejectListing: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { reason } = req.body;
+
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message: 'Rejection reason is required',
+        });
+      }
+
+      const existingListing = await prisma.listing.findUnique({
+        where: { id },
+      });
+
+      if (!existingListing) {
+        return res.status(404).json({
+          success: false,
+          message: 'Listing not found',
+        });
+      }
+
+      const listing = await prisma.listing.update({
+        where: { id },
+        data: {
+          status: 'rejected',
+          reviewedAt: new Date(),
+          reviewedBy: req.user.id,
+          flagReason: reason,
+        },
+        include: {
+          seller: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+      });
+
+      await logAdminAction(
+        req.user.id,
+        'reject_listing',
+        'listing',
+        id,
+        { title: listing.title, reason },
+        req
+      );
+
+      // TODO: Send notification to seller that listing has been rejected with reason
+
+      res.json({
+        success: true,
+        message: 'Listing rejected',
         data: listing,
       });
     } catch (error) {
@@ -1245,9 +1349,42 @@ const adminController = {
       const { id } = req.params;
       const { reason } = req.body;
 
+      if (!reason) {
+        return res.status(400).json({
+          success: false,
+          message: 'Flag reason is required',
+        });
+      }
+
+      const existingListing = await prisma.listing.findUnique({
+        where: { id },
+      });
+
+      if (!existingListing) {
+        return res.status(404).json({
+          success: false,
+          message: 'Listing not found',
+        });
+      }
+
       const listing = await prisma.listing.update({
         where: { id },
-        data: { status: 'flagged' },
+        data: {
+          status: 'flagged',
+          reviewedAt: new Date(),
+          reviewedBy: req.user.id,
+          flagReason: reason,
+        },
+        include: {
+          seller: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
       });
 
       await logAdminAction(
@@ -1255,9 +1392,11 @@ const adminController = {
         'flag_listing',
         'listing',
         id,
-        { reason },
+        { title: listing.title, reason },
         req
       );
+
+      // TODO: Send notification to seller that listing has been flagged
 
       res.json({
         success: true,
@@ -2283,6 +2422,76 @@ const adminController = {
         success: true,
         message: 'Blog post created successfully',
         data: post,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  // Update a blog post
+  updateBlogPost: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { content } = req.body;
+
+      const post = await prisma.post.findUnique({
+        where: { id },
+      });
+
+      if (!post) {
+        return res.status(404).json({
+          success: false,
+          message: 'Blog post not found',
+        });
+      }
+
+      if (post.type !== 'blog') {
+        return res.status(400).json({
+          success: false,
+          message: 'This is not a blog post',
+        });
+      }
+
+      // Update the post
+      const updatedPost = await prisma.post.update({
+        where: { id },
+        data: {
+          content: content || post.content,
+        },
+        include: {
+          author: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              photo: true,
+              role: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+              saves: true,
+            },
+          },
+        },
+      });
+
+      // Log admin action
+      await logAdminAction(
+        req.user.id,
+        'update_blog_post',
+        'post',
+        id,
+        { contentPreview: content?.substring(0, 100) },
+        req
+      );
+
+      res.json({
+        success: true,
+        message: 'Blog post updated successfully',
+        data: updatedPost,
       });
     } catch (error) {
       next(error);
