@@ -217,7 +217,7 @@ const userController = {
       const listings = await prisma.listing.findMany({
         where: {
           sellerId: id,
-          status: 'active',
+          status: { in: ['active', 'sold'] },
         },
         take: parseInt(limit) + 1,
         ...(cursor && {

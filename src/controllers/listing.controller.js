@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { Prisma } = require('@prisma/client');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 
 const listingController = {
@@ -823,14 +824,33 @@ const listingController = {
         viewsByCategory[listing.category] += listingViews;
       });
 
-      // Calculate total inquiries (comments)
-      const totalInquiries = listings.reduce((sum, l) => sum + l._count.comments, 0);
+      // Calculate total inquiries (comments) for current period
+      const currentPeriodInquiries = await prisma.comment.count({
+        where: {
+          listingId: { in: listingIds.length > 0 ? listingIds : ['00000000-0000-0000-0000-000000000000'] },
+          createdAt: { gte: startDate },
+        },
+      });
 
-      // Calculate conversion rate
+      // Calculate total inquiries for previous period
+      const previousPeriodInquiries = await prisma.comment.count({
+        where: {
+          listingId: { in: listingIds.length > 0 ? listingIds : ['00000000-0000-0000-0000-000000000000'] },
+          createdAt: { gte: previousStartDate, lt: startDate },
+        },
+      });
+
+      const totalInquiries = currentPeriodInquiries;
+
+      // Calculate conversion rate for current and previous periods
       const totalViews = currentPeriodViews;
       const conversionRate = totalViews > 0 ? ((totalInquiries / totalViews) * 100).toFixed(1) : 0;
 
-      // Calculate trend (compare to previous period)
+      const previousConversionRate = previousPeriodViews > 0
+        ? ((previousPeriodInquiries / previousPeriodViews) * 100)
+        : 0;
+
+      // Calculate views trend (compare to previous period)
       let viewsTrend = 0;
       if (previousPeriodViews > 0) {
         viewsTrend = (((currentPeriodViews - previousPeriodViews) / previousPeriodViews) * 100).toFixed(1);
@@ -838,17 +858,50 @@ const listingController = {
         viewsTrend = 100;
       }
 
+      // Calculate inquiries trend
+      let inquiriesTrend = 0;
+      if (previousPeriodInquiries > 0) {
+        inquiriesTrend = (((currentPeriodInquiries - previousPeriodInquiries) / previousPeriodInquiries) * 100).toFixed(1);
+      } else if (currentPeriodInquiries > 0) {
+        inquiriesTrend = 100;
+      }
+
+      // Calculate conversion trend
+      let conversionTrend = 0;
+      if (previousConversionRate > 0) {
+        conversionTrend = (((parseFloat(conversionRate) - previousConversionRate) / previousConversionRate) * 100).toFixed(1);
+      } else if (parseFloat(conversionRate) > 0) {
+        conversionTrend = 100;
+      }
+
       // Get views over time (grouped by day/week/month based on range)
-      const viewsOverTimeRaw = await prisma.$queryRaw`
-        SELECT
-          DATE_TRUNC(${range === 'year' ? 'month' : range === '90days' ? 'week' : 'day'}, "createdAt") as date,
-          COUNT(*) as views
-        FROM "ListingView"
-        WHERE "listingId" = ANY(${listingIds}::uuid[])
-          AND "createdAt" >= ${startDate}
-        GROUP BY DATE_TRUNC(${range === 'year' ? 'month' : range === '90days' ? 'week' : 'day'}, "createdAt")
-        ORDER BY date ASC
-      `;
+      // Handle empty listingIds array
+      let viewsOverTimeRaw = [];
+      if (listingIds.length > 0) {
+        // Use separate queries based on range since DATE_TRUNC requires a literal string
+        if (range === 'year') {
+          viewsOverTimeRaw = await prisma.$queryRaw`
+            SELECT DATE_TRUNC('month', "createdAt") as date, COUNT(*) as views
+            FROM "ListingView"
+            WHERE "listingId" IN (${Prisma.join(listingIds)}) AND "createdAt" >= ${startDate}
+            GROUP BY 1 ORDER BY date ASC
+          `;
+        } else if (range === '90days') {
+          viewsOverTimeRaw = await prisma.$queryRaw`
+            SELECT DATE_TRUNC('week', "createdAt") as date, COUNT(*) as views
+            FROM "ListingView"
+            WHERE "listingId" IN (${Prisma.join(listingIds)}) AND "createdAt" >= ${startDate}
+            GROUP BY 1 ORDER BY date ASC
+          `;
+        } else {
+          viewsOverTimeRaw = await prisma.$queryRaw`
+            SELECT DATE_TRUNC('day', "createdAt") as date, COUNT(*) as views
+            FROM "ListingView"
+            WHERE "listingId" IN (${Prisma.join(listingIds)}) AND "createdAt" >= ${startDate}
+            GROUP BY 1 ORDER BY date ASC
+          `;
+        }
+      }
 
       const viewsOverTime = viewsOverTimeRaw.map(row => ({
         date: new Date(row.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
@@ -895,7 +948,9 @@ const listingController = {
           totalViews,
           viewsTrend: parseFloat(viewsTrend),
           totalInquiries,
+          inquiriesTrend: parseFloat(inquiriesTrend),
           conversionRate: parseFloat(conversionRate),
+          conversionTrend: parseFloat(conversionTrend),
           viewsByCategory: viewsByCategoryFormatted,
           viewsOverTime,
         },
@@ -949,29 +1004,34 @@ const listingController = {
       const listingIds = listings.map(l => l.id);
 
       // Get views grouped by day of week
-      const viewsByDayOfWeek = await prisma.$queryRaw`
-        SELECT
-          EXTRACT(DOW FROM "createdAt") as day_of_week,
-          COUNT(*) as views
-        FROM "ListingView"
-        WHERE "listingId" = ANY(${listingIds}::uuid[])
-          AND "createdAt" >= ${startDate}
-        GROUP BY EXTRACT(DOW FROM "createdAt")
-        ORDER BY views DESC
-      `;
+      let viewsByDayOfWeek = [];
+      let viewsByHour = [];
 
-      // Get views grouped by hour
-      const viewsByHour = await prisma.$queryRaw`
-        SELECT
-          EXTRACT(HOUR FROM "createdAt") as hour,
-          COUNT(*) as views
-        FROM "ListingView"
-        WHERE "listingId" = ANY(${listingIds}::uuid[])
-          AND "createdAt" >= ${startDate}
-        GROUP BY EXTRACT(HOUR FROM "createdAt")
-        ORDER BY views DESC
-        LIMIT 3
-      `;
+      if (listingIds.length > 0) {
+        viewsByDayOfWeek = await prisma.$queryRaw`
+          SELECT
+            EXTRACT(DOW FROM "createdAt") as day_of_week,
+            COUNT(*) as views
+          FROM "ListingView"
+          WHERE "listingId" IN (${Prisma.join(listingIds)})
+            AND "createdAt" >= ${startDate}
+          GROUP BY EXTRACT(DOW FROM "createdAt")
+          ORDER BY views DESC
+        `;
+
+        // Get views grouped by hour
+        viewsByHour = await prisma.$queryRaw`
+          SELECT
+            EXTRACT(HOUR FROM "createdAt") as hour,
+            COUNT(*) as views
+          FROM "ListingView"
+          WHERE "listingId" IN (${Prisma.join(listingIds)})
+            AND "createdAt" >= ${startDate}
+          GROUP BY EXTRACT(HOUR FROM "createdAt")
+          ORDER BY views DESC
+          LIMIT 3
+        `;
+      }
 
       // Calculate best day
       const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
