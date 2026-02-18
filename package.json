@@ -1,7 +1,7 @@
 {
   "name": "chicago-nigeria-backend",
   "version": "1.0.0",
-  "description": "Backend API for Chicago Nigeria platform",
+  "description": "Backend API for Chicago Nigerians platform",
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",

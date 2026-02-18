@@ -57,6 +57,7 @@ model User {
   stripeAccount  StripeAccount?
   payments       Payment[]
   payouts        Payout[]
+  subscription   SocialSubscription?
 
   @@index([email])
   @@index([phone])
@@ -434,7 +435,10 @@ model GroupMember {
 model Message {
   id         String   @id @default(uuid())
   content    String
+  images     String[] @default([]) // Array of image URLs
+  videos     String[] @default([]) // Array of video URLs
   isRead     Boolean  @default(false)
+  readAt     DateTime?
 
   senderId   String
   sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
@@ -642,4 +646,45 @@ model Payout {
   @@index([eventId])
   @@index([status])
   @@index([scheduledFor])
+}
+
+// ==================== SUBSCRIPTIONS ====================
+
+model SocialSubscription {
+  id                    String   @id @default(uuid())
+
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Subscription Details
+  planName              String   @default("Social Media Management")
+  amount                Int      @default(6500) // in cents ($65.00)
+  currency              String   @default("usd")
+  status                String   @default("active") // "active", "cancelled", "expired", "past_due"
+
+  // Stripe References
+  stripeSubscriptionId  String   @unique // sub_xxx
+  stripeCustomerId      String   // cus_xxx
+  stripePriceId         String?  // price_xxx
+
+  // Business Info (Snapshot)
+  businessName          String
+  businessType          String
+  socialHandles         Json?    // Store handles as JSON
+  contactEmail          String
+  contactPhone          String
+  description           String?
+
+  // Dates
+  currentPeriodStart    DateTime
+  currentPeriodEnd      DateTime
+  cancelledAt           DateTime?
+  cancelAtPeriodEnd     Boolean  @default(false)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([stripeSubscriptionId])
 }

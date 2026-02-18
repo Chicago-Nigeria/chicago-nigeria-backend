@@ -13,6 +13,7 @@ router.put('/preferences', authenticate, userController.updatePreferences);
 
 // Suggestions (auth required)
 router.get('/suggestions', authenticate, userController.getSuggestions);
+router.get('/search', authenticate, userController.searchUsersForMessaging);
 
 // Public user profile routes (with optional auth for isFollowing check)
 router.get('/:id', optionalAuth, userController.getPublicProfile);

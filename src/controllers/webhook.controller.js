@@ -28,6 +28,18 @@ const webhookController = {
       console.log(`Processing webhook event: ${event.type}`);
 
       switch (event.type) {
+        case 'checkout.session.completed':
+          await handleCheckoutSessionCompleted(event.data.object);
+          break;
+
+        case 'customer.subscription.updated':
+          await handleCustomerSubscriptionUpdated(event.data.object);
+          break;
+
+        case 'customer.subscription.deleted':
+          await handleCustomerSubscriptionDeleted(event.data.object);
+          break;
+
         case 'payment_intent.succeeded':
           await handlePaymentSuccess(event.data.object);
           break;
@@ -296,6 +308,117 @@ async function handleChargeRefunded(charge) {
       });
     }
   }
+}
+
+/**
+ * Handle completed checkout for monthly social media subscription.
+ * This is the authoritative source to create/update local subscription records.
+ */
+async function handleCheckoutSessionCompleted(session) {
+  if (session.mode !== 'subscription') return;
+  if (!session.subscription) return;
+
+  const metadata = session.metadata || {};
+  if (!metadata.userId) {
+    console.log('Subscription checkout missing userId metadata:', session.id);
+    return;
+  }
+
+  const stripeSubscriptionId = typeof session.subscription === 'string'
+    ? session.subscription
+    : session.subscription.id;
+
+  const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+  const currentPeriodStart = stripeSub.current_period_start
+    ? new Date(stripeSub.current_period_start * 1000)
+    : new Date();
+  const currentPeriodEnd = stripeSub.current_period_end
+    ? new Date(stripeSub.current_period_end * 1000)
+    : new Date();
+
+  let socialHandles = {};
+  try {
+    socialHandles = JSON.parse(metadata.socialHandles || '{}');
+  } catch (error) {
+    console.error('Invalid social handles metadata JSON:', error);
+  }
+
+  await prisma.socialSubscription.upsert({
+    where: { userId: metadata.userId },
+    update: {
+      status: stripeSub.status,
+      stripeSubscriptionId: stripeSub.id,
+      stripeCustomerId: typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer?.id,
+      stripePriceId: stripeSub.items?.data?.[0]?.price?.id || null,
+      currentPeriodStart,
+      currentPeriodEnd,
+      cancelAtPeriodEnd: stripeSub.cancel_at_period_end || false,
+      cancelledAt: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000) : null,
+      businessName: metadata.businessName || 'Business',
+      businessType: metadata.businessType || 'Other',
+      socialHandles,
+      contactEmail: metadata.contactEmail || '',
+      contactPhone: metadata.contactPhone || '',
+      description: metadata.description || null,
+    },
+    create: {
+      userId: metadata.userId,
+      status: stripeSub.status,
+      stripeSubscriptionId: stripeSub.id,
+      stripeCustomerId: typeof stripeSub.customer === 'string' ? stripeSub.customer : stripeSub.customer?.id,
+      stripePriceId: stripeSub.items?.data?.[0]?.price?.id || null,
+      currentPeriodStart,
+      currentPeriodEnd,
+      cancelAtPeriodEnd: stripeSub.cancel_at_period_end || false,
+      cancelledAt: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000) : null,
+      businessName: metadata.businessName || 'Business',
+      businessType: metadata.businessType || 'Other',
+      socialHandles,
+      contactEmail: metadata.contactEmail || '',
+      contactPhone: metadata.contactPhone || '',
+      description: metadata.description || null,
+    },
+  });
+
+  console.log('Social subscription synced from checkout:', stripeSub.id);
+}
+
+/**
+ * Keep subscription status in sync when Stripe updates billing lifecycle.
+ */
+async function handleCustomerSubscriptionUpdated(stripeSub) {
+  await prisma.socialSubscription.updateMany({
+    where: { stripeSubscriptionId: stripeSub.id },
+    data: {
+      status: stripeSub.status,
+      currentPeriodStart: stripeSub.current_period_start
+        ? new Date(stripeSub.current_period_start * 1000)
+        : undefined,
+      currentPeriodEnd: stripeSub.current_period_end
+        ? new Date(stripeSub.current_period_end * 1000)
+        : undefined,
+      cancelAtPeriodEnd: stripeSub.cancel_at_period_end || false,
+      cancelledAt: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000) : null,
+      stripePriceId: stripeSub.items?.data?.[0]?.price?.id || null,
+    },
+  });
+}
+
+/**
+ * Mark subscriptions cancelled when Stripe deletes them.
+ */
+async function handleCustomerSubscriptionDeleted(stripeSub) {
+  await prisma.socialSubscription.updateMany({
+    where: { stripeSubscriptionId: stripeSub.id },
+    data: {
+      status: stripeSub.status || 'canceled',
+      cancelAtPeriodEnd: true,
+      cancelledAt: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000) : new Date(),
+      currentPeriodEnd: stripeSub.current_period_end
+        ? new Date(stripeSub.current_period_end * 1000)
+        : undefined,
+    },
+  });
 }
 
 module.exports = webhookController;

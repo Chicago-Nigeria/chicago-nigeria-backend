@@ -634,6 +634,53 @@ const userController = {
     }
   },
 
+  // Search users for starting direct messages
+  searchUsersForMessaging: async (req, res, next) => {
+    try {
+      const currentUserId = req.user.id;
+      const query = (req.query.q || '').trim();
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 8, 1), 20);
+
+      if (query.length < 2) {
+        return res.json({
+          success: true,
+          data: [],
+        });
+      }
+
+      const users = await prisma.user.findMany({
+        where: {
+          id: { not: currentUserId },
+          isActive: true,
+          isVerified: true,
+          OR: [
+            { firstName: { contains: query, mode: 'insensitive' } },
+            { lastName: { contains: query, mode: 'insensitive' } },
+            { email: { contains: query, mode: 'insensitive' } },
+          ],
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          photo: true,
+          profession: true,
+          location: true,
+        },
+        orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+        take: limit,
+      });
+
+      res.json({
+        success: true,
+        data: users,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   getProfile: async (req, res, next) => {
     try {
       const user = await prisma.user.findUnique({
